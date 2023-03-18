@@ -44,12 +44,15 @@ public class RocksDBClient extends DB {
 
   static final String PROPERTY_ROCKSDB_DIR = "rocksdb.dir";
   static final String PROPERTY_ROCKSDB_OPTIONS_FILE = "rocksdb.optionsfile";
+  static final String PROPERTY_ROCKSDB_STATS = "rocksdb.stats";
   private static final String COLUMN_FAMILY_NAMES_FILENAME = "CF_NAMES";
 
   private static final Logger LOGGER = LoggerFactory.getLogger(RocksDBClient.class);
 
   @GuardedBy("RocksDBClient.class") private static Path rocksDbDir = null;
   @GuardedBy("RocksDBClient.class") private static Path optionsFile = null;
+  @GuardedBy("RocksDBClient.class") private static Boolean enableStats = false;
+  @GuardedBy("RocksDBClient.class") private static Statistics stats = null;
   @GuardedBy("RocksDBClient.class") private static RocksObject dbOptions = null;
   @GuardedBy("RocksDBClient.class") private static RocksDB rocksDb = null;
   @GuardedBy("RocksDBClient.class") private static int references = 0;
@@ -68,6 +71,14 @@ public class RocksDBClient extends DB {
         if (optionsFileString != null) {
           optionsFile = Paths.get(optionsFileString);
           LOGGER.info("RocksDB options file: " + optionsFile);
+        }
+
+        String optionsStatsString = getProperties().getProperty(PROPERTY_ROCKSDB_STATS);
+        if (optionsStatsString != null && optionsStatsString=="true") {
+          enableStats = true;
+          LOGGER.info("RocksDB stats enabled");
+          stats = new Statistics();
+          stats.setStatsLevel(StatsLevel.ALL);
         }
 
         try {
@@ -103,6 +114,9 @@ public class RocksDBClient extends DB {
 
     RocksDB.loadLibrary();
     OptionsUtil.loadOptionsFromFile(optionsFile.toAbsolutePath().toString(), Env.getDefault(), options, cfDescriptors);
+    if (enableStats) {
+      options.setStatistics(stats);
+    }
     dbOptions = options;
 
     final RocksDB db = RocksDB.open(options, rocksDbDir.toAbsolutePath().toString(), cfDescriptors, cfHandles);
@@ -155,6 +169,9 @@ public class RocksDBClient extends DB {
           .setIncreaseParallelism(rocksThreads)
           .setMaxBackgroundCompactions(rocksThreads)
           .setInfoLogLevel(InfoLogLevel.INFO_LEVEL);
+      if (enableStats) {
+        options.setStatistics(stats);
+      }
       dbOptions = options;
       return RocksDB.open(options, rocksDbDir.toAbsolutePath().toString());
     } else {
@@ -164,6 +181,9 @@ public class RocksDBClient extends DB {
           .setIncreaseParallelism(rocksThreads)
           .setMaxBackgroundCompactions(rocksThreads)
           .setInfoLogLevel(InfoLogLevel.INFO_LEVEL);
+      if (enableStats) {
+        options.setStatistics(stats);
+      }
       dbOptions = options;
 
       final List<ColumnFamilyHandle> cfHandles = new ArrayList<>();
@@ -182,6 +202,9 @@ public class RocksDBClient extends DB {
     synchronized (RocksDBClient.class) {
       try {
         if (references == 1) {
+          if (enableStats) {
+            LOGGER.info("RocksDB stats: " + stats.toString());
+          }
           for (final ColumnFamily cf : COLUMN_FAMILIES.values()) {
             cf.getHandle().close();
           }
